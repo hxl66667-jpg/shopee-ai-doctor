@@ -10,10 +10,11 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     service: "shopee-ai-doctor",
-    version: "2.1.0",
+    version: "2.2.0",
     supabaseConfigured: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && browserKeyConfigured),
     authPersistence: true,
     aiConfigured: Boolean(process.env.OPENAI_API_KEY),
+    aiModel: "gpt-5.6-luna",
     timestamp: new Date().toISOString(),
   });
 }
