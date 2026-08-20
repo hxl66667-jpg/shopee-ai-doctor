@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./persistence.css";
 
 export const metadata: Metadata = {
   title: "Shopee AI Doctor | REAIM",
