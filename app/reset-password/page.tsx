@@ -19,85 +19,82 @@ export default function ResetPasswordPage() {
       return;
     }
 
-    let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
+    const initRecovery = async () => {
+      const hash = window.location.hash.substring(1);
+      const params = new URLSearchParams(hash);
+      const accessToken = params.get("access_token");
+      const refreshToken = params.get("refresh_token");
+      const type = params.get("type");
+
+      if (accessToken && refreshToken && type === "recovery") {
+        await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+      }
+
+      const { data } = await supabase.auth.getSession();
       setHasSession(Boolean(data.session));
       setReady(true);
-    });
+    };
+
+    void initRecovery();
 
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!mounted) return;
       if (event === "PASSWORD_RECOVERY" || session) {
         setHasSession(Boolean(session));
-        setReady(true);
       }
     });
 
-    return () => {
-      mounted = false;
-      data.subscription.unsubscribe();
-    };
+    return () => data.subscription.unsubscribe();
   }, []);
 
   async function updatePassword() {
     if (password.length < 8) {
-      setMessage("新密码至少需要 8 位。 ");
+      setMessage("新密码至少需要 8 位。");
       return;
     }
     if (password !== confirmPassword) {
-      setMessage("两次输入的密码不一致。 ");
+      setMessage("两次输入的密码不一致。");
       return;
     }
 
     const supabase = getSupabaseBrowserClient();
-    if (!supabase) {
-      setMessage("Supabase 尚未配置。 ");
-      return;
-    }
+    if (!supabase) return;
 
     setWorking(true);
     setMessage("");
-    try {
-      const { error } = await supabase.auth.updateUser({ password });
-      if (error) throw error;
+    const { error } = await supabase.auth.updateUser({ password });
+
+    if (error) {
+      setMessage(`密码更新失败：${error.message}`);
+    } else {
       setSuccess(true);
-      setMessage("密码已更新成功。为了安全，系统会退出当前恢复会话，然后返回首页重新登录。 ");
-      setPassword("");
-      setConfirmPassword("");
+      setMessage("密码修改成功，请重新登录。");
       await supabase.auth.signOut();
-      window.setTimeout(() => window.location.assign("/"), 1800);
-    } catch (error) {
-      setMessage(error instanceof Error ? `密码更新失败：${error.message}` : "密码更新失败，请重新发送重置邮件。 ");
-    } finally {
-      setWorking(false);
+      setTimeout(() => window.location.assign("/"), 1500);
     }
+    setWorking(false);
   }
 
   return (
     <main className="recovery-page">
       <section className="recovery-card">
-        <div className="recovery-brand"><span>R</span><div><strong>REAIM</strong><small>Shopee AI Doctor</small></div></div>
-        <div className="recovery-kicker">ACCOUNT RECOVERY</div>
         <h1>设置新密码</h1>
-        <p>从 Shopee AI Doctor 发出的密码重置邮件进入此页面后，可以为账号设置新的登录密码。</p>
-
         {!hasSupabaseBrowserConfig() ? (
-          <div className="recovery-status recovery-error">Supabase 尚未配置，暂时无法修改密码。</div>
+          <div className="recovery-status recovery-error">Supabase 未配置。</div>
         ) : !ready ? (
           <div className="recovery-status">正在验证重置链接…</div>
         ) : !hasSession ? (
-          <div className="recovery-status recovery-error">重置链接无效、已经过期，或没有建立恢复会话。请返回首页，点击“忘记密码”重新发送一封邮件。</div>
+          <div className="recovery-status recovery-error">重置链接无效或已过期，请重新发送密码邮件。</div>
         ) : (
-          <form onSubmit={(event) => { event.preventDefault(); void updatePassword(); }}>
-            <label>新密码<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" placeholder="至少 8 位" /></label>
-            <label>再次输入新密码<input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="再次输入" /></label>
-            <button type="submit" disabled={working || success}>{working ? "正在更新…" : success ? "已更新" : "确认修改密码"}</button>
+          <form onSubmit={(e) => { e.preventDefault(); void updatePassword(); }}>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="新密码" />
+            <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="确认密码" />
+            <button disabled={working || success}>{working ? "更新中…" : "修改密码"}</button>
           </form>
         )}
-
-        {message && <div className={`recovery-status ${success ? "recovery-success" : "recovery-error"}`}>{message}</div>}
-        <a className="recovery-back" href="/">← 返回 Shopee AI Doctor</a>
+        {message && <div className="recovery-status">{message}</div>}
       </section>
     </main>
   );
