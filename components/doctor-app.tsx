@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { analyzeReports } from "@/lib/shopee/diagnosis";
 import { demoAds, demoAffiliate, demoProducts } from "@/lib/shopee/demo";
 import { parseAds, parseAffiliate, parseProductPerformance } from "@/lib/shopee/parser";
 import type { AnalysisResult, Diagnosis, Severity } from "@/lib/shopee/types";
+import { getSupabaseBrowserClient, hasSupabaseBrowserConfig } from "@/lib/supabase/client";
+import { loadRecentRuns, saveAnalysis, type RecentRun } from "@/lib/supabase/persistence";
 
 const severityLabel: Record<Severity, string> = {
   P0: "立即处理",
@@ -16,6 +18,8 @@ const severityLabel: Record<Severity, string> = {
 };
 
 const severityOrder: Severity[] = ["P0", "P1", "SCALE", "P2", "WATCH", "DATA"];
+
+type SaveState = "idle" | "local" | "saving" | "saved" | "error";
 
 function pct(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
@@ -77,6 +81,56 @@ export function DoctorApp() {
   const [query, setQuery] = useState("");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [saveMessage, setSaveMessage] = useState("");
+
+  const [authReady, setAuthReady] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authWorking, setAuthWorking] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
+  const [history, setHistory] = useState<RecentRun[]>([]);
+
+  const supabaseConfigured = hasSupabaseBrowserConfig();
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      setAuthReady(true);
+      return;
+    }
+
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setUserEmail(data.session?.user.email ?? null);
+      setAuthReady(true);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      setUserEmail(session?.user.email ?? null);
+      setAuthReady(true);
+    });
+
+    return () => {
+      mounted = false;
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!userEmail || !shopUrl) {
+      setHistory([]);
+      return;
+    }
+    let cancelled = false;
+    loadRecentRuns(shopUrl)
+      .then((rows) => { if (!cancelled) setHistory(rows); })
+      .catch(() => { if (!cancelled) setHistory([]); });
+    return () => { cancelled = true; };
+  }, [shopUrl, userEmail]);
 
   const filtered = useMemo(() => {
     if (!result) return [];
@@ -93,6 +147,54 @@ export function DoctorApp() {
     return { totalGmv, p0, scale, avgCtr };
   }, [result]);
 
+  async function refreshHistory() {
+    if (!userEmail || !shopUrl) return;
+    try {
+      setHistory(await loadRecentRuns(shopUrl));
+    } catch {
+      // History is secondary; a failed refresh should not hide a completed diagnosis.
+    }
+  }
+
+  async function handleAuth(mode: "login" | "signup") {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      setAuthMessage("Supabase 环境变量未配置。 ");
+      return;
+    }
+    if (!authEmail.trim() || authPassword.length < 6) {
+      setAuthMessage("请输入有效邮箱，密码至少 6 位。 ");
+      return;
+    }
+
+    setAuthWorking(true);
+    setAuthMessage("");
+    try {
+      if (mode === "signup") {
+        const { data, error: authError } = await supabase.auth.signUp({ email: authEmail.trim(), password: authPassword });
+        if (authError) throw authError;
+        setAuthMessage(data.session ? "注册并登录成功。" : "注册成功。若邮箱确认已开启，请先到邮箱完成确认，再回来登录。 ");
+      } else {
+        const { error: authError } = await supabase.auth.signInWithPassword({ email: authEmail.trim(), password: authPassword });
+        if (authError) throw authError;
+        setAuthMessage("登录成功，之后的真实诊断会自动保存。 ");
+      }
+    } catch (caught) {
+      setAuthMessage(caught instanceof Error ? caught.message : "登录失败，请检查邮箱和密码。 ");
+    } finally {
+      setAuthWorking(false);
+    }
+  }
+
+  async function signOut() {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    setHistory([]);
+    setSaveState("local");
+    setSaveMessage("已退出登录；新诊断将只保留在当前页面。 ");
+  }
+
   async function runAnalysis() {
     if (!productFile) {
       setError("请先上传 Product Performance / 商品表现报表。也可以先点击“查看演示结果”。");
@@ -100,6 +202,7 @@ export function DoctorApp() {
     }
     setWorking(true);
     setError("");
+    setSaveMessage("");
     try {
       const [products, ads, affiliate] = await Promise.all([
         parseProductPerformance(productFile),
@@ -107,7 +210,38 @@ export function DoctorApp() {
         affiliateFile ? parseAffiliate(affiliateFile) : Promise.resolve([]),
       ]);
       if (!products.length) throw new Error("没有识别到商品汇总数据。请确认报表格式与 Shopee Product Performance 一致。 ");
-      setResult(analyzeReports(products, ads, affiliate));
+
+      const analysis = analyzeReports(products, ads, affiliate);
+      setResult(analysis);
+
+      if (!userEmail) {
+        setSaveState("local");
+        setSaveMessage(supabaseConfigured ? "诊断已完成；登录后可自动保存到 Supabase。" : "诊断已完成；当前未配置 Supabase，因此只保留在本页面。 ");
+        return;
+      }
+
+      setSaveState("saving");
+      setSaveMessage("正在把本次诊断安全保存到 Supabase…");
+      try {
+        const saved = await saveAnalysis({
+          shopUrl,
+          products,
+          ads,
+          affiliate,
+          analysis,
+          sourceFiles: {
+            product: productFile.name,
+            ads: adsFile?.name,
+            affiliate: affiliateFile?.name,
+          },
+        });
+        setSaveState("saved");
+        setSaveMessage(`已保存诊断记录 · Run ${saved.importRunId.slice(0, 8)}`);
+        await refreshHistory();
+      } catch (saveError) {
+        setSaveState("error");
+        setSaveMessage(saveError instanceof Error ? `诊断已完成，但保存失败：${saveError.message}` : "诊断已完成，但保存失败。 ");
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "解析失败，请检查文件格式。 ");
     } finally {
@@ -118,13 +252,15 @@ export function DoctorApp() {
   function loadDemo() {
     setError("");
     setResult(analyzeReports(demoProducts, demoAds, demoAffiliate));
+    setSaveState("local");
+    setSaveMessage("当前是演示数据，不写入数据库。 ");
   }
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand"><div className="brand-mark">R</div><div><strong>REAIM</strong><span>Shopee AI Doctor</span></div></div>
-        <div className="topbar-status"><i /> V2 Clean Rebuild</div>
+        <div className="topbar-status"><i /> V2.1 · Secure Persistence</div>
       </header>
 
       <section className="hero">
@@ -141,6 +277,28 @@ export function DoctorApp() {
         </div>
       </section>
 
+      <section className="account-strip">
+        <div className="account-copy">
+          <strong>诊断记录与数据安全</strong>
+          <span>报表仍在浏览器内解析；登录后只保存结构化指标与诊断结果，不上传原始报表文件。</span>
+        </div>
+        {!supabaseConfigured ? (
+          <div className="account-state account-warning">Supabase 未配置 · 当前仅本地分析</div>
+        ) : !authReady ? (
+          <div className="account-state">正在检查登录状态…</div>
+        ) : userEmail ? (
+          <div className="account-user"><div><small>已登录</small><b>{userEmail}</b></div><button type="button" onClick={signOut}>退出</button></div>
+        ) : (
+          <div className="auth-form">
+            <input type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="邮箱" autoComplete="email" />
+            <input type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="密码（至少 6 位）" autoComplete="current-password" />
+            <button type="button" onClick={() => handleAuth("login")} disabled={authWorking}>{authWorking ? "处理中…" : "登录"}</button>
+            <button type="button" className="auth-secondary" onClick={() => handleAuth("signup")} disabled={authWorking}>注册</button>
+          </div>
+        )}
+        {authMessage && <div className="auth-message">{authMessage}</div>}
+      </section>
+
       <section className="workspace">
         <div className="section-heading"><div><span>01</span><h2>上传数据</h2></div><p>Product Performance 必需；广告与联盟报表可选，但上传后诊断更完整。</p></div>
         <div className="file-grid">
@@ -152,8 +310,9 @@ export function DoctorApp() {
         <div className="action-row">
           <button type="button" className="primary-button" onClick={runAnalysis} disabled={working}>{working ? "正在解析与诊断…" : "开始诊断"}</button>
           <button type="button" className="secondary-button" onClick={loadDemo}>查看演示结果</button>
-          <span>所有报表先在浏览器内解析；V2 当前不会把文件原文发送给第三方。</span>
+          <span>真实报表在浏览器内解析；数据库仅保存结构化指标与结果。</span>
         </div>
+        {saveMessage && <div className={`save-state save-${saveState}`}>{saveMessage}</div>}
       </section>
 
       {result && summary && (
@@ -183,8 +342,24 @@ export function DoctorApp() {
         </section>
       )}
 
+      {userEmail && history.length > 0 && (
+        <section className="history-section">
+          <div className="section-heading"><div><span>03</span><h2>最近诊断记录</h2></div><p>同一店铺最近保存的 8 次诊断，用于后续复盘优化前后变化。</p></div>
+          <div className="history-grid">
+            {history.map((run) => (
+              <article className="history-card" key={run.id}>
+                <div><span className={`history-status history-${run.status}`}>{run.status === "completed" ? "已完成" : run.status === "failed" ? "失败" : "处理中"}</span><small>{new Date(run.createdAt).toLocaleString("zh-CN")}</small></div>
+                <strong>{run.productCount} 个商品</strong>
+                <p>P0 {run.p0} · P1 {run.p1} · SCALE {run.scale}</p>
+                <code>{run.id.slice(0, 8)}</code>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="logic-section">
-        <div className="section-heading"><div><span>03</span><h2>诊断逻辑</h2></div><p>先看样本量，再看流量漏斗；优先修“高曝光 × 大缺口”的链接。</p></div>
+        <div className="section-heading"><div><span>04</span><h2>诊断逻辑</h2></div><p>先看样本量，再看流量漏斗；优先修“高曝光 × 大缺口”的链接。</p></div>
         <div className="logic-grid">
           <div><b>1</b><h3>曝光 → 点击</h3><p>CTR 低于店内 P25 且曝光足够，优先检查主图、标题、价格与搜索相关性。</p></div>
           <div><b>2</b><h3>点击 → 加购</h3><p>加购率偏低，说明首屏承诺与详情页承接、规格说明或价格梯度需要调整。</p></div>
@@ -193,7 +368,7 @@ export function DoctorApp() {
         </div>
       </section>
 
-      <footer><strong>Shopee AI Doctor</strong><span>REAIM Operations Intelligence · Clean Rebuild V2</span></footer>
+      <footer><strong>Shopee AI Doctor</strong><span>REAIM Operations Intelligence · V2.1</span></footer>
       {selected && <DiagnosisDrawer item={selected} onClose={() => setSelected(null)} />}
     </main>
   );
