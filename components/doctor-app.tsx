@@ -1,0 +1,200 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { analyzeReports } from "@/lib/shopee/diagnosis";
+import { demoAds, demoAffiliate, demoProducts } from "@/lib/shopee/demo";
+import { parseAds, parseAffiliate, parseProductPerformance } from "@/lib/shopee/parser";
+import type { AnalysisResult, Diagnosis, Severity } from "@/lib/shopee/types";
+
+const severityLabel: Record<Severity, string> = {
+  P0: "立即处理",
+  P1: "高优先级",
+  P2: "可优化",
+  SCALE: "可放量",
+  WATCH: "观察",
+  DATA: "数据问题",
+};
+
+const severityOrder: Severity[] = ["P0", "P1", "SCALE", "P2", "WATCH", "DATA"];
+
+function pct(value: number): string {
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+function money(value: number): string {
+  return new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(value || 0);
+}
+
+function FileCard({ title, description, required, file, accept, onChange }: { title: string; description: string; required?: boolean; file: File | null; accept: string; onChange: (file: File | null) => void }) {
+  return (
+    <label className={`file-card ${file ? "has-file" : ""}`}>
+      <input type="file" accept={accept} onChange={(event) => onChange(event.target.files?.[0] ?? null)} />
+      <div className="file-icon">{file ? "✓" : "+"}</div>
+      <div>
+        <div className="file-title">{title} {required && <span>必需</span>}</div>
+        <div className="file-description">{file ? file.name : description}</div>
+      </div>
+    </label>
+  );
+}
+
+function MetricCard({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return <div className="metric-card"><div className="metric-label">{label}</div><div className="metric-value">{value}</div><div className="metric-hint">{hint}</div></div>;
+}
+
+function DiagnosisDrawer({ item, onClose }: { item: Diagnosis; onClose: () => void }) {
+  const cr = item.row.confirmedBuyerCr || item.row.placedBuyerCr;
+  return (
+    <div className="drawer-backdrop" onMouseDown={onClose}>
+      <aside className="drawer" role="dialog" aria-modal="true" aria-label="商品诊断详情" onMouseDown={(event) => event.stopPropagation()}>
+        <button type="button" className="drawer-close" aria-label="关闭诊断详情" onClick={onClose}>×</button>
+        <div className={`severity-badge severity-${item.severity.toLowerCase()}`}>{item.severity} · {severityLabel[item.severity]}</div>
+        <h2>{item.productName}</h2>
+        <div className="drawer-id">Item ID: {item.itemId}</div>
+        <div className="drawer-score"><span>机会分</span><strong>{item.opportunityScore}</strong><small>/100</small></div>
+        <div className="mini-grid">
+          <div><span>CTR</span><strong>{pct(item.row.ctr)}</strong></div>
+          <div><span>加购率</span><strong>{pct(item.row.addToCartRate)}</strong></div>
+          <div><span>成交率</span><strong>{pct(cr)}</strong></div>
+          <div><span>ROAS</span><strong>{item.row.ad ? item.row.ad.roas.toFixed(2) : "—"}</strong></div>
+        </div>
+        <section className="drawer-section"><h3>核心判断</h3><p className="problem-text">{item.primaryProblem}</p></section>
+        <section className="drawer-section"><h3>证据</h3><ul>{item.evidence.map((line) => <li key={line}>{line}</li>)}</ul></section>
+        <section className="drawer-section"><h3>建议动作</h3><ol>{item.actions.map((line) => <li key={line}>{line}</li>)}</ol></section>
+      </aside>
+    </div>
+  );
+}
+
+export function DoctorApp() {
+  const [shopUrl, setShopUrl] = useState("https://shopee.ph/boltnutmall#product_list");
+  const [productFile, setProductFile] = useState<File | null>(null);
+  const [adsFile, setAdsFile] = useState<File | null>(null);
+  const [affiliateFile, setAffiliateFile] = useState<File | null>(null);
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [selected, setSelected] = useState<Diagnosis | null>(null);
+  const [severity, setSeverity] = useState<Severity | "ALL">("ALL");
+  const [query, setQuery] = useState("");
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+
+  const filtered = useMemo(() => {
+    if (!result) return [];
+    const normalized = query.trim().toLowerCase();
+    return result.diagnoses.filter((item) => (severity === "ALL" || item.severity === severity) && (!normalized || item.productName.toLowerCase().includes(normalized) || item.itemId.includes(normalized)));
+  }, [query, result, severity]);
+
+  const summary = useMemo(() => {
+    if (!result) return null;
+    const totalGmv = result.products.reduce((sum, row) => sum + row.confirmedSales, 0);
+    const p0 = result.diagnoses.filter((item) => item.severity === "P0").length;
+    const scale = result.diagnoses.filter((item) => item.severity === "SCALE").length;
+    const avgCtr = result.products.length ? result.products.reduce((sum, row) => sum + row.ctr, 0) / result.products.length : 0;
+    return { totalGmv, p0, scale, avgCtr };
+  }, [result]);
+
+  async function runAnalysis() {
+    if (!productFile) {
+      setError("请先上传 Product Performance / 商品表现报表。也可以先点击“查看演示结果”。");
+      return;
+    }
+    setWorking(true);
+    setError("");
+    try {
+      const [products, ads, affiliate] = await Promise.all([
+        parseProductPerformance(productFile),
+        adsFile ? parseAds(adsFile) : Promise.resolve([]),
+        affiliateFile ? parseAffiliate(affiliateFile) : Promise.resolve([]),
+      ]);
+      if (!products.length) throw new Error("没有识别到商品汇总数据。请确认报表格式与 Shopee Product Performance 一致。 ");
+      setResult(analyzeReports(products, ads, affiliate));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "解析失败，请检查文件格式。 ");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  function loadDemo() {
+    setError("");
+    setResult(analyzeReports(demoProducts, demoAds, demoAffiliate));
+  }
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="brand"><div className="brand-mark">R</div><div><strong>REAIM</strong><span>Shopee AI Doctor</span></div></div>
+        <div className="topbar-status"><i /> V2 Clean Rebuild</div>
+      </header>
+
+      <section className="hero">
+        <div className="hero-copy">
+          <div className="eyebrow">SHOPEE PHILIPPINES · PRODUCT DIAGNOSTICS</div>
+          <h1>把店铺报表变成<br /><em>可执行的链接诊断。</em></h1>
+          <p>输入店铺链接并上传 Shopee 后台报表，系统会按 Item ID 合并商品、广告和联盟数据，用店内动态 P25 / Median / P75 判断问题，而不是使用一刀切的固定阈值。</p>
+          <div className="hero-pills"><span>CTR 点击诊断</span><span>加购率</span><span>转化率</span><span>广告 ROAS</span><span>优先级排序</span></div>
+        </div>
+        <div className="hero-panel">
+          <div className="hero-panel-label">本次诊断店铺</div>
+          <input value={shopUrl} onChange={(event) => setShopUrl(event.target.value)} placeholder="https://shopee.ph/yourshop#product_list" />
+          <div className="hero-panel-note">店铺链接用于标识诊断对象；核心判断来自你上传的后台真实数据，避免只凭前台页面猜测。</div>
+        </div>
+      </section>
+
+      <section className="workspace">
+        <div className="section-heading"><div><span>01</span><h2>上传数据</h2></div><p>Product Performance 必需；广告与联盟报表可选，但上传后诊断更完整。</p></div>
+        <div className="file-grid">
+          <FileCard title="Product Performance" description="XLSX / XLS / CSV · 商品级表现" required file={productFile} accept=".xlsx,.xls,.csv" onChange={setProductFile} />
+          <FileCard title="Shopee Ads" description="CSV / XLSX · GMV Max / 搜索广告" file={adsFile} accept=".csv,.xlsx,.xls" onChange={setAdsFile} />
+          <FileCard title="Affiliate" description="CSV / XLSX · 联盟伙伴贡献" file={affiliateFile} accept=".csv,.xlsx,.xls" onChange={setAffiliateFile} />
+        </div>
+        {error && <div className="error-box">{error}</div>}
+        <div className="action-row">
+          <button type="button" className="primary-button" onClick={runAnalysis} disabled={working}>{working ? "正在解析与诊断…" : "开始诊断"}</button>
+          <button type="button" className="secondary-button" onClick={loadDemo}>查看演示结果</button>
+          <span>所有报表先在浏览器内解析；V2 当前不会把文件原文发送给第三方。</span>
+        </div>
+      </section>
+
+      {result && summary && (
+        <section className="results">
+          <div className="section-heading"><div><span>02</span><h2>诊断总览</h2></div><p>{shopUrl || "当前店铺"} · 共识别 {result.products.length} 个商品链接</p></div>
+          <div className="metric-grid">
+            <MetricCard label="确认销售额" value={money(summary.totalGmv)} hint="本次 Product Performance 数据" />
+            <MetricCard label="平均 CTR" value={pct(summary.avgCtr)} hint={`店内中位数 ${pct(result.benchmarks.ctr.median)}`} />
+            <MetricCard label="P0 链接" value={String(summary.p0)} hint="优先处理高流量损失" />
+            <MetricCard label="可放量链接" value={String(summary.scale)} hint="CTR + CR 达到店内高位" />
+          </div>
+
+          {result.warnings.length > 0 && <div className="warning-strip">{result.warnings.map((warning) => <span key={warning}>• {warning}</span>)}</div>}
+
+          <div className="result-card">
+            <div className="result-toolbar">
+              <div className="severity-tabs"><button type="button" className={severity === "ALL" ? "active" : ""} onClick={() => setSeverity("ALL")}>全部 {result.diagnoses.length}</button>{severityOrder.map((level) => <button type="button" key={level} className={severity === level ? "active" : ""} onClick={() => setSeverity(level)}>{level} {result.diagnoses.filter((item) => item.severity === level).length}</button>)}</div>
+              <input className="search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索商品名 / Item ID" />
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>优先级</th><th>商品</th><th>曝光</th><th>CTR</th><th>加购率</th><th>成交率</th><th>ROAS</th><th>机会分</th><th>核心判断</th></tr></thead>
+                <tbody>{filtered.map((item) => { const cr = item.row.confirmedBuyerCr || item.row.placedBuyerCr; return <tr key={item.itemId} onClick={() => setSelected(item)}><td><span className={`severity-badge severity-${item.severity.toLowerCase()}`}>{item.severity}</span></td><td><strong>{item.productName}</strong><small>{item.itemId}</small></td><td>{Math.round(item.row.impressions).toLocaleString()}</td><td>{pct(item.row.ctr)}</td><td>{pct(item.row.addToCartRate)}</td><td>{pct(cr)}</td><td>{item.row.ad ? item.row.ad.roas.toFixed(2) : "—"}</td><td><div className="score-cell"><b>{item.opportunityScore}</b><span><i style={{ width: `${item.opportunityScore}%` }} /></span></div></td><td className="problem-cell">{item.primaryProblem}<span>查看详情 →</span></td></tr>; })}</tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <section className="logic-section">
+        <div className="section-heading"><div><span>03</span><h2>诊断逻辑</h2></div><p>先看样本量，再看流量漏斗；优先修“高曝光 × 大缺口”的链接。</p></div>
+        <div className="logic-grid">
+          <div><b>1</b><h3>曝光 → 点击</h3><p>CTR 低于店内 P25 且曝光足够，优先检查主图、标题、价格与搜索相关性。</p></div>
+          <div><b>2</b><h3>点击 → 加购</h3><p>加购率偏低，说明首屏承诺与详情页承接、规格说明或价格梯度需要调整。</p></div>
+          <div><b>3</b><h3>访客 → 成交</h3><p>有流量但成交弱，重点排查 SKU、信任、评价、优惠、售后和购买决策成本。</p></div>
+          <div><b>4</b><h3>广告 → GMV</h3><p>广告数据按 Item ID 合并，区分“素材点击问题”和“商品本身转化问题”。</p></div>
+        </div>
+      </section>
+
+      <footer><strong>Shopee AI Doctor</strong><span>REAIM Operations Intelligence · Clean Rebuild V2</span></footer>
+      {selected && <DiagnosisDrawer item={selected} onClose={() => setSelected(null)} />}
+    </main>
+  );
+}

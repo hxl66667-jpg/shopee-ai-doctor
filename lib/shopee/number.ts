@@ -1,27 +1,26 @@
 export function num(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  if (value === null || value === undefined || value === "" || value === "-" || value === "--") return 0;
-  const cleaned = String(value).replace(/[₱,%\s,]/g, "").trim();
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "-" || raw === "--") return 0;
+  const negative = /^\(.*\)$/.test(raw);
+  const cleaned = raw.replace(/[₱$,%\s,()]/g, "");
   const parsed = Number(cleaned);
-  return Number.isFinite(parsed) ? parsed : 0;
+  if (!Number.isFinite(parsed)) return 0;
+  return negative ? -parsed : parsed;
 }
 
 export function rate(value: unknown): number {
   if (typeof value === "number") return value > 1 ? value / 100 : value;
-  const text = String(value ?? "").trim();
-  if (!text || text === "-" || text === "--") return 0;
-  const n = num(text);
-  return text.includes("%") || Math.abs(n) > 1 ? n / 100 : n;
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "-") return 0;
+  const parsed = num(raw);
+  return raw.includes("%") || parsed > 1 ? parsed / 100 : parsed;
 }
 
-export function safeDivide(a: number, b: number): number {
-  return b > 0 ? a / b : 0;
+export function safeDivide(numerator: number, denominator: number): number {
+  return denominator > 0 ? numerator / denominator : 0;
 }
 
-export function money(value: number): string {
-  return new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(value || 0);
-}
-
-export function pct(value: number): string {
-  return `${((value || 0) * 100).toFixed(2)}%`;
+export function clamp(value: number, min = 0, max = 1): number {
+  return Math.min(max, Math.max(min, value));
 }
