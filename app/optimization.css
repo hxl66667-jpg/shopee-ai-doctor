@@ -1,0 +1,98 @@
+.optimization-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 45;
+  border: 1px solid rgba(56, 189, 248, .4);
+  border-radius: 999px;
+  padding: 11px 16px 11px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(2, 6, 23, .92);
+  color: #e0f2fe;
+  box-shadow: 0 14px 40px rgba(2, 6, 23, .38);
+  cursor: pointer;
+}
+.optimization-fab span { width: 27px; height: 27px; border-radius: 50%; display: grid; place-items: center; background: rgba(14, 165, 233, .18); color: #38bdf8; }
+.optimization-fab b { font-size: 12px; }
+
+.optimization-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(2, 6, 23, .76);
+  backdrop-filter: blur(8px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.optimization-modal {
+  position: relative;
+  width: min(960px, 100%);
+  max-height: min(820px, calc(100vh - 48px));
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, .2);
+  border-radius: 24px;
+  background: #0b1220;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .42);
+  padding: 26px;
+}
+.optimization-close { position: absolute; right: 18px; top: 16px; width: 36px; height: 36px; border: 0; background: rgba(148,163,184,.08); color: #94a3b8; border-radius: 50%; cursor: pointer; font-size: 22px; }
+.optimization-modal header > span { color: #38bdf8; font-size: 9px; letter-spacing: .14em; font-weight: 900; }
+.optimization-modal header h2 { margin: 7px 0; color: #f8fafc; font-size: 24px; }
+.optimization-modal header p { margin: 0; color: #94a3b8; font-size: 12px; line-height: 1.7; }
+.optimization-empty { min-height: 260px; display: grid; place-content: center; text-align: center; color: #94a3b8; }
+.optimization-empty strong { color: #e2e8f0; font-size: 17px; }
+.optimization-empty p { font-size: 12px; }
+
+.optimization-run { margin: 20px 0 14px; display: grid; grid-template-columns: 140px 1fr 220px; gap: 10px; }
+.optimization-run > div { padding: 11px; border-radius: 12px; background: rgba(15, 23, 42, .72); border: 1px solid rgba(148,163,184,.12); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.optimization-run small { color: #64748b; font-size: 9px; text-transform: uppercase; }
+.optimization-run code, .optimization-run span { color: #cbd5e1; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.optimization-form { padding: 16px; border: 1px solid rgba(56,189,248,.16); border-radius: 16px; background: rgba(14, 165, 233, .035); }
+.optimization-form label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.optimization-form label > span { color: #94a3b8; font-size: 10px; font-weight: 800; }
+.optimization-form select, .optimization-form textarea { width: 100%; border: 1px solid rgba(148,163,184,.2); border-radius: 10px; background: rgba(2,6,23,.72); color: #e2e8f0; padding: 10px; outline: none; font: inherit; font-size: 12px; }
+.optimization-form textarea { resize: vertical; line-height: 1.55; }
+.optimization-form select:focus, .optimization-form textarea:focus { border-color: rgba(56,189,248,.55); }
+.optimization-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.optimization-problem { display: flex; gap: 8px; align-items: flex-start; margin: -2px 0 13px; padding: 10px; border-radius: 10px; background: rgba(245,158,11,.07); color: #cbd5e1; font-size: 11px; line-height: 1.55; }
+.optimization-problem b { color: #fbbf24; }
+.optimization-baseline { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: center; padding: 10px 12px; margin-bottom: 12px; border-radius: 10px; background: rgba(99,102,241,.07); }
+.optimization-baseline span { color: #818cf8; font-size: 10px; font-weight: 900; }
+.optimization-baseline strong { color: #e0e7ff; font-size: 13px; }
+.optimization-baseline small { grid-column: 2; color: #64748b; font-size: 9px; }
+.optimization-save { width: 100%; min-height: 42px; border: 1px solid rgba(56,189,248,.45); border-radius: 11px; background: rgba(14,165,233,.16); color: #e0f2fe; font-weight: 800; cursor: pointer; }
+.optimization-save:disabled { opacity: .5; cursor: wait; }
+.optimization-message { margin-top: 9px; color: #bae6fd; font-size: 10px; line-height: 1.55; }
+
+.optimization-history { margin-top: 20px; }
+.optimization-history h3 { color: #f8fafc; font-size: 14px; margin: 0 0 10px; }
+.optimization-history { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.optimization-history > h3, .optimization-no-tests { grid-column: 1 / -1; }
+.optimization-no-tests { color: #64748b; font-size: 11px; }
+.optimization-history article { padding: 13px; border: 1px solid rgba(148,163,184,.13); border-radius: 13px; background: rgba(15,23,42,.55); }
+.optimization-history-top { display: flex; justify-content: space-between; align-items: center; }
+.optimization-history-top small { color: #64748b; font-size: 9px; }
+.optimization-result { padding: 3px 7px; border-radius: 999px; font-size: 9px; font-weight: 900; }
+.result-pending { color: #fde68a; background: rgba(245,158,11,.1); }
+.result-improved { color: #86efac; background: rgba(34,197,94,.1); }
+.result-flat { color: #cbd5e1; background: rgba(148,163,184,.1); }
+.result-worse { color: #fca5a5; background: rgba(239,68,68,.1); }
+.optimization-history article > strong { display: block; color: #e2e8f0; margin-top: 10px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.optimization-history article > p { color: #94a3b8; font-size: 10px; line-height: 1.55; min-height: 31px; }
+.optimization-delta { display: flex; align-items: center; gap: 7px; border-top: 1px solid rgba(148,163,184,.1); padding-top: 8px; }
+.optimization-delta span { margin-right: auto; color: #64748b; font-size: 9px; }
+.optimization-delta b { color: #cbd5e1; font-size: 11px; }
+.optimization-delta i { color: #475569; font-style: normal; }
+
+@media (max-width: 720px) {
+  .optimization-backdrop { padding: 10px; }
+  .optimization-modal { padding: 20px 14px; max-height: calc(100vh - 20px); border-radius: 18px; }
+  .optimization-modal header h2 { font-size: 20px; padding-right: 36px; }
+  .optimization-run { grid-template-columns: 1fr; }
+  .optimization-form-row, .optimization-history { grid-template-columns: 1fr; }
+  .optimization-fab { right: 14px; bottom: 14px; }
+}
