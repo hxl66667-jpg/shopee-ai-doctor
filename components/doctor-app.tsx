@@ -21,6 +21,23 @@ const severityOrder: Severity[] = ["P0", "P1", "SCALE", "P2", "WATCH", "DATA"];
 
 type SaveState = "idle" | "local" | "saving" | "saved" | "error";
 
+interface AiAction {
+  priority?: string;
+  action?: string;
+  why?: string;
+  expectedImpact?: string;
+}
+
+interface AiAnalysis {
+  summary?: string;
+  rootCauses?: string[];
+  actions?: AiAction[];
+  creativeBrief?: { mainImage?: string; title?: string; detailPage?: string };
+  abTest?: { variable?: string; control?: string; variant?: string; successMetric?: string; minimumWindow?: string };
+  risks?: string[];
+  meta?: { model?: string; generatedAt?: string; source?: string };
+}
+
 function pct(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
@@ -46,8 +63,47 @@ function MetricCard({ label, value, hint }: { label: string; value: string; hint
   return <div className="metric-card"><div className="metric-label">{label}</div><div className="metric-value">{value}</div><div className="metric-hint">{hint}</div></div>;
 }
 
-function DiagnosisDrawer({ item, onClose }: { item: Diagnosis; onClose: () => void }) {
+function DiagnosisDrawer({ item, onClose, runId, canUseAi }: { item: Diagnosis; onClose: () => void; runId: string | null; canUseAi: boolean }) {
   const cr = item.row.confirmedBuyerCr || item.row.placedBuyerCr;
+  const [aiAnalysis, setAiAnalysis] = useState<AiAnalysis | null>(null);
+  const [aiWorking, setAiWorking] = useState(false);
+  const [aiError, setAiError] = useState("");
+
+  async function runAiDiagnosis() {
+    if (!runId) {
+      setAiError("请先完成并保存一次真实诊断，再使用 AI 深度诊断。 ");
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const { data } = await supabase?.auth.getSession() ?? { data: { session: null } };
+    const accessToken = data.session?.access_token;
+    if (!accessToken) {
+      setAiError("登录已失效，请重新登录。 ");
+      return;
+    }
+
+    setAiWorking(true);
+    setAiError("");
+    try {
+      const response = await fetch("/api/ai-diagnose", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ importRunId: runId, itemId: item.itemId }),
+      });
+      const payload = await response.json().catch(() => ({})) as { analysis?: AiAnalysis; error?: string };
+      if (!response.ok || !payload.analysis) throw new Error(payload.error || "AI 深度诊断失败。 ");
+      setAiAnalysis(payload.analysis);
+    } catch (caught) {
+      setAiError(caught instanceof Error ? caught.message : "AI 深度诊断失败。 ");
+    } finally {
+      setAiWorking(false);
+    }
+  }
+
   return (
     <div className="drawer-backdrop" onMouseDown={onClose}>
       <aside className="drawer" role="dialog" aria-modal="true" aria-label="商品诊断详情" onMouseDown={(event) => event.stopPropagation()}>
@@ -64,7 +120,27 @@ function DiagnosisDrawer({ item, onClose }: { item: Diagnosis; onClose: () => vo
         </div>
         <section className="drawer-section"><h3>核心判断</h3><p className="problem-text">{item.primaryProblem}</p></section>
         <section className="drawer-section"><h3>证据</h3><ul>{item.evidence.map((line) => <li key={line}>{line}</li>)}</ul></section>
-        <section className="drawer-section"><h3>建议动作</h3><ol>{item.actions.map((line) => <li key={line}>{line}</li>)}</ol></section>
+        <section className="drawer-section"><h3>规则建议动作</h3><ol>{item.actions.map((line) => <li key={line}>{line}</li>)}</ol></section>
+
+        <section className="drawer-section ai-section">
+          <div className="ai-heading">
+            <div><span className="ai-kicker">GPT-5.6 LUNA</span><h3>AI 深度诊断</h3></div>
+            {!aiAnalysis && <button type="button" className="ai-button" onClick={runAiDiagnosis} disabled={aiWorking || !canUseAi}>{aiWorking ? "正在分析…" : "生成深度方案"}</button>}
+          </div>
+          {!canUseAi && <p className="ai-note">登录并完成一次真实诊断后可使用。AI 只接收已保存的结构化指标，不接收原始报表文件。</p>}
+          {aiError && <div className="ai-error">{aiError}</div>}
+          {aiAnalysis && (
+            <div className="ai-result">
+              <p className="ai-summary">{aiAnalysis.summary || "已生成深度诊断。"}</p>
+              {(aiAnalysis.rootCauses?.length ?? 0) > 0 && <div className="ai-block"><h4>可能根因</h4><ul>{aiAnalysis.rootCauses?.map((cause) => <li key={cause}>{cause}</li>)}</ul></div>}
+              {(aiAnalysis.actions?.length ?? 0) > 0 && <div className="ai-block"><h4>执行优先级</h4><div className="ai-actions">{aiAnalysis.actions?.map((action, index) => <article key={`${action.action}-${index}`}><b>{action.priority || `#${index + 1}`}</b><strong>{action.action}</strong><p>{action.why}</p><small>观察：{action.expectedImpact}</small></article>)}</div></div>}
+              {aiAnalysis.creativeBrief && <div className="ai-block"><h4>素材与页面 Brief</h4><dl><div><dt>主图</dt><dd>{aiAnalysis.creativeBrief.mainImage}</dd></div><div><dt>标题</dt><dd>{aiAnalysis.creativeBrief.title}</dd></div><div><dt>详情页</dt><dd>{aiAnalysis.creativeBrief.detailPage}</dd></div></dl></div>}
+              {aiAnalysis.abTest && <div className="ai-block"><h4>A/B 测试</h4><p><b>{aiAnalysis.abTest.variable}</b></p><p>对照：{aiAnalysis.abTest.control}</p><p>实验：{aiAnalysis.abTest.variant}</p><p>成功指标：{aiAnalysis.abTest.successMetric} · {aiAnalysis.abTest.minimumWindow}</p></div>}
+              {(aiAnalysis.risks?.length ?? 0) > 0 && <div className="ai-block ai-risks"><h4>需要进一步验证</h4><ul>{aiAnalysis.risks?.map((risk) => <li key={risk}>{risk}</li>)}</ul></div>}
+              {aiAnalysis.meta?.model && <div className="ai-meta">已缓存 · {aiAnalysis.meta.model}</div>}
+            </div>
+          )}
+        </section>
       </aside>
     </div>
   );
@@ -83,6 +159,7 @@ export function DoctorApp() {
   const [error, setError] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveMessage, setSaveMessage] = useState("");
+  const [savedRunId, setSavedRunId] = useState<string | null>(null);
 
   const [authReady, setAuthReady] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -191,6 +268,7 @@ export function DoctorApp() {
     if (!supabase) return;
     await supabase.auth.signOut();
     setHistory([]);
+    setSavedRunId(null);
     setSaveState("local");
     setSaveMessage("已退出登录；新诊断将只保留在当前页面。 ");
   }
@@ -203,6 +281,7 @@ export function DoctorApp() {
     setWorking(true);
     setError("");
     setSaveMessage("");
+    setSavedRunId(null);
     try {
       const [products, ads, affiliate] = await Promise.all([
         parseProductPerformance(productFile),
@@ -235,8 +314,9 @@ export function DoctorApp() {
             affiliate: affiliateFile?.name,
           },
         });
+        setSavedRunId(saved.importRunId);
         setSaveState("saved");
-        setSaveMessage(`已保存诊断记录 · Run ${saved.importRunId.slice(0, 8)}`);
+        setSaveMessage(`已保存诊断记录 · Run ${saved.importRunId.slice(0, 8)} · 可打开任一商品生成 AI 深度方案`);
         await refreshHistory();
       } catch (saveError) {
         setSaveState("error");
@@ -252,23 +332,24 @@ export function DoctorApp() {
   function loadDemo() {
     setError("");
     setResult(analyzeReports(demoProducts, demoAds, demoAffiliate));
+    setSavedRunId(null);
     setSaveState("local");
-    setSaveMessage("当前是演示数据，不写入数据库。 ");
+    setSaveMessage("当前是演示数据，不写入数据库，也不消耗 AI API。 ");
   }
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand"><div className="brand-mark">R</div><div><strong>REAIM</strong><span>Shopee AI Doctor</span></div></div>
-        <div className="topbar-status"><i /> V2.1 · Secure Persistence</div>
+        <div className="topbar-status"><i /> V2.2 · AI Diagnosis</div>
       </header>
 
       <section className="hero">
         <div className="hero-copy">
           <div className="eyebrow">SHOPEE PHILIPPINES · PRODUCT DIAGNOSTICS</div>
           <h1>把店铺报表变成<br /><em>可执行的链接诊断。</em></h1>
-          <p>输入店铺链接并上传 Shopee 后台报表，系统会按 Item ID 合并商品、广告和联盟数据，用店内动态 P25 / Median / P75 判断问题，而不是使用一刀切的固定阈值。</p>
-          <div className="hero-pills"><span>CTR 点击诊断</span><span>加购率</span><span>转化率</span><span>广告 ROAS</span><span>优先级排序</span></div>
+          <p>输入店铺链接并上传 Shopee 后台报表，系统会按 Item ID 合并商品、广告和联盟数据，用店内动态 P25 / Median / P75 判断问题，再把结构化证据交给 AI 生成可执行方案。</p>
+          <div className="hero-pills"><span>CTR 点击诊断</span><span>加购率</span><span>转化率</span><span>广告 ROAS</span><span>AI 深度方案</span></div>
         </div>
         <div className="hero-panel">
           <div className="hero-panel-label">本次诊断店铺</div>
@@ -368,8 +449,8 @@ export function DoctorApp() {
         </div>
       </section>
 
-      <footer><strong>Shopee AI Doctor</strong><span>REAIM Operations Intelligence · V2.1</span></footer>
-      {selected && <DiagnosisDrawer item={selected} onClose={() => setSelected(null)} />}
+      <footer><strong>Shopee AI Doctor</strong><span>REAIM Operations Intelligence · V2.2</span></footer>
+      {selected && <DiagnosisDrawer item={selected} onClose={() => setSelected(null)} runId={savedRunId} canUseAi={Boolean(userEmail && savedRunId)} />}
     </main>
   );
 }
